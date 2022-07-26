@@ -33,8 +33,8 @@ type
 
 
 var
-  set = false
-  parsed = false
+  calledSetArg = false
+  calledParseArg = false
   arguments: Arguments
   argumentOptions: ArgumentOptions
   longNames: Table[string, ArgumentOption]
@@ -68,8 +68,8 @@ proc setArg*(args: ArgumentOptions) =
   if shortNames.len != shortNames.keys.toSeq.toHashSet.len:
     raise ArgumentDuplicateError.newException("Duplicate short options")
 
-  set = true
-  parsed = false
+  calledSetArg = true
+  calledParseArg = false
 
 
 proc setArg*(args: varargs[ArgumentOption]) =
@@ -84,13 +84,13 @@ proc name(arg: ArgumentOption): string =
     return arg.short
 
 
-proc parseArgs*(cmdargs = os.commandLineParams()) =
-  if not set:
+proc parseArg*(cmdargs = os.commandLineParams()) =
+  if not calledSetArg:
     raiseAssert("Please call `setArg()` first.")
 
-  if parsed:
+  if calledParseArg:
     return
-  parsed = true
+  calledParseArg = true
 
   var i = 0
   while i <= cmdargs.high:
@@ -129,28 +129,33 @@ proc parseArgs*(cmdargs = os.commandLineParams()) =
 
 
 proc getValue*(s: string): string =
-  parseArgs()
+  parseArg()
 
-  let arg = if longNames.hasKey(s):
-    longNames[s]
-  elif shortNames.hasKey(s):
-    shortNames[s]
-  else:
-    raise ArgumentUnknownError.newException("Unknown option: " & s)
+  let arg =
+    if longNames.hasKey(s):
+      longNames[s]
+    elif shortNames.hasKey(s):
+      shortNames[s]
+    else:
+      raise ArgumentUnknownError.newException("Unknown option: " & s)
   arg.value
 
 
+# 1-index
 proc getValue*(i: int): string =
+  parseArg()
+
   arguments[i-1]
 
 
 proc getValueF*(s: string): bool =
-  parseArgs()
+  parseArg()
 
-  let arg = if longNames.hasKey(s):
-    longNames[s]
-  elif shortNames.hasKey(s):
-    shortNames[s]
-  else:
-    raise ArgumentUnknownError.newException("Unknown option: " & s)
+  let arg =
+    if longNames.hasKey(s):
+      longNames[s]
+    elif shortNames.hasKey(s):
+      shortNames[s]
+    else:
+      raise ArgumentUnknownError.newException("Unknown option: " & s)
   arg.valueFlag
