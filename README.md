@@ -1,6 +1,7 @@
 # shellopt.nim
 
-A library for parsing command line arguments in the form commonly used in shell.
+Nim library for CLI tool, parsing command line arguments.
+Unlike the Nim default, it is adapted to the standard format of the shell.
 
 # Usage
 
