@@ -4,6 +4,12 @@ import os, sets, strutils, tables, sequtils
 type
   Argument = string
   Arguments = seq[Argument]
+  # required condition
+  # 1. `long` or `short` must be set.
+  # 2. Don't set `required` and `flag` at the same time.
+  # 3. Don't set strings of more than 2 characters for `short` and `shortAlias`.
+  # 4. Don't set strings of single character for `long` and `longAlias`.
+  # Violation of these raises an ArgumentInvalidOptionError.
   ArgumentOption* = ref object
     long*: string
     longAlias*: seq[string]
@@ -14,7 +20,15 @@ type
     flag*: bool
     valueFlag: bool
   ArgumentOptions* = seq[ArgumentOption]
-  ArgumentSetError = object of CatchableError
+
+  # Errors
+  # See above.
+  ArgumentInvalidOptionError = object of CatchableError
+  # The option names (`long` or `short` or these alias) are duplicated.
+  ArgumentDuplicateError = object of CatchableError
+  # The required options are not specified at runtime.
+  ArgumentRequiredError = object of CatchableError
+  # Get a value with unset option name.
   ArgumentUnknownError = object of CatchableError
 
 
@@ -27,13 +41,17 @@ var
   shortNames: Table[string, ArgumentOption]
 
 
-proc getKeys(t: Table[string, ArgumentOption]): seq[string] =
-  for k in t.keys:
-    result.add(k)
-
-
 proc setArg*(args: ArgumentOptions) =
   for arg in args:
+    if arg.long == "" and arg.short == "":
+      raise ArgumentInvalidOptionError.newException("Neither `long` nor `short` is set\n" & $arg[])
+    if arg.required and arg.flag:
+      raise ArgumentInvalidOptionError.newException("`required` and `flag` are set at the same." & $arg[])
+    if arg.short.len > 1 or arg.shortAlias.countIt(it.len > 1) > 0:
+      raise ArgumentInvalidOptionError.newException("Set strings of more than 2 characters for `short` or `shortAlias`" & $arg[])
+    if arg.long.len == 1 or arg.longAlias.countIt(it.len == 1) > 0:
+      raise ArgumentInvalidOptionError.newException("Set strings of single character for `long` or `longAlias`" & $arg[])
+
     argumentOptions.add(arg)
 
     longNames[arg[].long] = arg
@@ -44,11 +62,11 @@ proc setArg*(args: ArgumentOptions) =
     for s in arg[].shortAlias:
       shortNames[s] = arg
 
-  if longNames.len != longNames.getKeys.toHashSet.len:
-    raise ArgumentSetError.newException("Duplicate long options")
+  if longNames.len != longNames.keys.toSeq.toHashSet.len:
+    raise ArgumentDuplicateError.newException("Duplicate long options")
 
-  if shortNames.len != shortNames.getKeys.toHashSet.len:
-    raise ArgumentSetError.newException("Duplicate short options")
+  if shortNames.len != shortNames.keys.toSeq.toHashSet.len:
+    raise ArgumentDuplicateError.newException("Duplicate short options")
 
   set = true
   parsed = false
@@ -57,6 +75,13 @@ proc setArg*(args: ArgumentOptions) =
 proc setArg*(args: varargs[ArgumentOption]) =
   let argsSeq = args.toSeq
   setArg(argsSeq)
+
+
+proc name(arg: ArgumentOption): string =
+  if arg.long != "":
+    return arg.long
+  else:
+    return arg.short
 
 
 proc parseArgs*(cmdargs = os.commandLineParams()) =
@@ -95,6 +120,12 @@ proc parseArgs*(cmdargs = os.commandLineParams()) =
     else:
       arguments.add(cmdarg)
     i.inc
+
+  let requiredErrors = argumentOptions
+    .filterIt(it.required and it.value == "")
+    .mapIt(it.name)
+  if requiredErrors.len > 0:
+    raise ArgumentRequiredError.newException("Required options: " & $requiredErrors & " are not set.")
 
 
 proc getValue*(s: string): string =
