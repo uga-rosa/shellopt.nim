@@ -28,7 +28,7 @@ proc build(s: seq[(ArgumentOptions, seq[string])]): InputExpects =
 proc run(ies: InputExpects) =
   for ie in ies:
     setArg(ie.set)
-    parseArgs(ie.input)
+    parseArg(ie.input)
     for k, v in ie.expect:
       if v == "true":
         let
