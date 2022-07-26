@@ -1,6 +1,6 @@
 # shellopt.nim
 
-A library for parsing command line arguments in the from commonly used in ordinary shell.
+A library for parsing command line arguments in the form commonly used in shell.
 
 # Usage
 
