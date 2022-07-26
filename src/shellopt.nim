@@ -8,9 +8,9 @@ type
     string, int, float, bool
   # required condition
   # 1. `long` or `short` must be set.
-  # 2. Don't set `required` and `flag` at the same time.
-  # 3. Don't set strings of more than 2 characters for `short` and `shortAlias`.
-  # 4. Don't set strings of single character for `long` and `longAlias`.
+  # 2. Don't set `required` and `flag` (same as `valueType: ValueType.bool`) at the same time.
+  # 3. Don't set a string of more than 2 characters for `short`.
+  # 4. Don't set a string of single character for `long`.
   # Violation of these raises an ArgumentInvalidOptionError.
   ArgumentOption* = ref object
     long*: string
@@ -44,6 +44,14 @@ var
   argumentOptions: ArgumentOptions
   longNames: Table[string, ArgumentOption]
   shortNames: Table[string, ArgumentOption]
+  usage: string
+
+
+argumentOptions.add(ArgumentOption(
+  long: "help",
+  short: "h",
+  dscr: "Print this help message."
+))
 
 
 proc setArg*(args: ArgumentOptions) =
@@ -209,3 +217,57 @@ proc getValueBool*(s: string): bool =
     return arg.valueAsString == "true"
   else:
     raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not bool.")
+
+
+proc setUsage*(s: string) =
+  usage = s
+
+
+proc getStrings(arg: ArgumentOption): (string, string, string) =
+  var keys: seq[string]
+  if arg.short != "":
+    keys.add("-" & arg.short)
+  if arg.long != "":
+    keys.add("--" & arg.long)
+  (keys.join(", "), $arg.valueType, arg.dscr)
+
+
+proc getHelpDocument*(): string =
+  let executableName = getAppFilename()
+  var doc = fmt"""Usage:
+  {executableName} [optional-params] [required-params]
+{usage}
+
+Options:"""
+
+  let
+    required = argumentOptions
+      .filterIt(it.required)
+      .map(getStrings)
+    optional = argumentOptions
+      .filterIt(not it.required)
+      .map(getStrings)
+
+  var cols: (int, int, int)
+  for r in required:
+    if cols[0] < r[0].len:
+      cols[0] = r[0].len
+    if cols[1] < r[1].len:
+      cols[1] = r[1].len
+  for o in optional:
+    if cols[0] < o[0].len:
+      cols[0] = o[0].len
+    if cols[1] < o[1].len:
+      cols[1] = o[1].len
+  cols[0].inc(2)
+  cols[1].inc(4)
+
+  let
+    requiredDoc = required
+      .mapIt("  " & it[0].alignLeft(cols[0]) & ": " & it[1].alignLeft(cols[1]) & it[2])
+      .join("\n")
+    optionalDoc = optional
+      .mapIt("  " & it[0].alignLeft(cols[0]) & ": " & it[1].alignLeft(cols[1]) & it[2])
+      .join("\n")
+
+  return fmt"{doc}\n{requiredDoc}\n{optionalDoc}"
