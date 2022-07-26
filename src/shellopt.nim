@@ -1,9 +1,11 @@
-import os, sets, strutils, tables, sequtils
+import os, sets, strutils, tables, sequtils, strformat
 
 
 type
   Argument = string
   Arguments = seq[Argument]
+  ValueType* {.pure.} = enum
+    string, int, float, bool
   # required condition
   # 1. `long` or `short` must be set.
   # 2. Don't set `required` and `flag` at the same time.
@@ -12,24 +14,27 @@ type
   # Violation of these raises an ArgumentInvalidOptionError.
   ArgumentOption* = ref object
     long*: string
-    longAlias*: seq[string]
     short*: string
-    shortAlias*: seq[string]
+    valueType*: ValueType
+    dscr*: string
     required*: bool
-    value: string
-    flag*: bool
-    valueFlag: bool
+    valueAsString: string
+    flag*: bool # Alias: valueType bool
   ArgumentOptions* = seq[ArgumentOption]
 
   # Errors
   # See above.
-  ArgumentInvalidOptionError = object of CatchableError
-  # The option names (`long` or `short` or these alias) are duplicated.
+  ArgumentOptionError = object of CatchableError
+  # The option names (`long` or `short`) are duplicated.
   ArgumentDuplicateError = object of CatchableError
   # The required options are not specified at runtime.
   ArgumentRequiredError = object of CatchableError
-  # Get a value with unset option name.
-  ArgumentUnknownError = object of CatchableError
+  # Unknown option name
+  ArgumentNameError = object of CatchableError
+  # Get a value with invalid type.
+  ArgumentTypeError = object of CatchableError
+  # Parsing failed
+  ArgumentParseError = object of CatchableError
 
 
 var
@@ -44,23 +49,29 @@ var
 proc setArg*(args: ArgumentOptions) =
   for arg in args:
     if arg.long == "" and arg.short == "":
-      raise ArgumentInvalidOptionError.newException("Neither `long` nor `short` is set\n" & $arg[])
+      raise ArgumentOptionError.newException("Neither `long` nor `short` is set\n" & $arg[])
     if arg.required and arg.flag:
-      raise ArgumentInvalidOptionError.newException("`required` and `flag` are set at the same." & $arg[])
-    if arg.short.len > 1 or arg.shortAlias.countIt(it.len > 1) > 0:
-      raise ArgumentInvalidOptionError.newException("Set strings of more than 2 characters for `short` or `shortAlias`" & $arg[])
-    if arg.long.len == 1 or arg.longAlias.countIt(it.len == 1) > 0:
-      raise ArgumentInvalidOptionError.newException("Set strings of single character for `long` or `longAlias`" & $arg[])
+      raise ArgumentOptionError.newException("`required` and `flag` are set at the same.\n" & $arg[])
+    if arg.short.len > 1:
+      raise ArgumentOptionError.newException("Set strings of more than 2 characters for `short`.\n" & $arg[])
+    if arg.long.len == 10:
+      raise ArgumentOptionError.newException("Set strings of single character for `long`\n" & $arg[])
+
+    if arg.valueType == ValueType.bool:
+      arg.flag = true
+    elif arg.flag == true:
+      arg.valueType = ValueType.bool
 
     argumentOptions.add(arg)
 
-    longNames[arg[].long] = arg
-    for l in arg[].longAlias:
-      longNames[l] = arg
+    # Set short option name automatically.
+    if arg.short == "":
+      let s = $arg.long[0]
+      if not shortNames.hasKey(s):
+        arg.short = s
 
-    shortNames[arg[].short] = arg
-    for s in arg[].shortAlias:
-      shortNames[s] = arg
+    longNames[arg.long] = arg
+    shortNames[arg.short] = arg
 
   if longNames.len != longNames.keys.toSeq.toHashSet.len:
     raise ArgumentDuplicateError.newException("Duplicate long options")
@@ -97,65 +108,104 @@ proc parseArg*(cmdargs = os.commandLineParams()) =
     let cmdarg = cmdargs[i]
     if cmdarg.startsWith("--"):
       let long = cmdarg[2..^1]
-      let arg = longNames[long]
-      if arg.flag:
-        arg.valueFlag = true
+      if longNames.hasKey(long):
+        let arg = longNames[long]
+        if arg.flag:
+          arg.valueAsString = "true"
+        else:
+          i.inc
+          arg.valueAsString = cmdargs[i]
       else:
-        i.inc
-        arg.value = cmdargs[i]
+        raise ArgumentNameError.newException("Unknown option: " & $long)
     elif cmdarg.startsWith("-"):
       let shorts = cmdarg[1..^1]
       for j in 0..shorts.high:
-        let s = $shorts[j]
-        let arg = shortNames[s]
-        if arg.flag:
-          arg.valueFlag = true
-        else:
-          if j == shorts.high:
-            i.inc
-            arg.value = cmdargs[i]
+        let short = $shorts[j]
+        if shortNames.hasKey(short):
+          let arg = shortNames[short]
+          if arg.flag:
+            arg.valueAsString = "true"
           else:
-            arg.value = shorts[j+1..^1]
-          break
+            if j == shorts.high:
+              i.inc
+              arg.valueAsString = cmdargs[i]
+            else:
+              arg.valueAsString = shorts[j+1..^1]
+            break
+        else:
+          raise ArgumentNameError.newException("Unknown option: " & $short)
     else:
       arguments.add(cmdarg)
     i.inc
 
   let requiredErrors = argumentOptions
-    .filterIt(it.required and it.value == "")
+    .filterIt(it.required and it.valueAsString == "")
     .mapIt(it.name)
   if requiredErrors.len > 0:
-    raise ArgumentRequiredError.newException("Required options: " & $requiredErrors & " are not set.")
-
-
-proc getValue*(s: string): string =
-  parseArg()
-
-  let arg =
-    if longNames.hasKey(s):
-      longNames[s]
-    elif shortNames.hasKey(s):
-      shortNames[s]
-    else:
-      raise ArgumentUnknownError.newException("Unknown option: " & s)
-  arg.value
+    raise ArgumentRequiredError.newException(fmt"Required options: {requiredErrors} are not set.")
 
 
 # 1-index
 proc getValue*(i: int): string =
+  let id = i-1
   parseArg()
 
-  arguments[i-1]
+  if id <= arguments.high:
+    return arguments[id]
+  else:
+    let num =
+      case i
+      of 1: "1st"
+      of 2: "2nd"
+      of 3: "3rd"
+      else: $i & "th"
+    raise ArgumentNameError.newException(fmt"The {num} argument is called, but there are only {arguments.len} arguments.")
 
 
-proc getValueF*(s: string): bool =
+proc getArg(s: string): ArgumentOption =
   parseArg()
+  if longNames.hasKey(s):
+    return longNames[s]
+  elif shortNames.hasKey(s):
+    return shortNames[s]
+  else:
+    raise ArgumentNameError.newException("Unknown option: " & s)
 
-  let arg =
-    if longNames.hasKey(s):
-      longNames[s]
-    elif shortNames.hasKey(s):
-      shortNames[s]
-    else:
-      raise ArgumentUnknownError.newException("Unknown option: " & s)
-  arg.valueFlag
+
+# getValue`Type`() raises ArgumentTypeError if the type is not appropriate.
+# The only exception is this function, which is allowed to be retrieved as a string even if it is set to another type.
+proc getValueString*(s: string): string =
+  let arg = getArg(s)
+  # Omitted type check
+  return arg.valueAsString
+
+
+proc getValueInt*(s: string): int =
+  let arg = getArg(s)
+  if arg.valueType == ValueType.int:
+    try:
+      return arg.valueAsString.parseInt
+    except ValueError:
+      raise ArgumentParseError.newException(fmt"{arg.valueAsString} cannot be parsed to int.")
+  else:
+    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not int.")
+
+
+proc getValueFloat*(s: string): float =
+  let arg = getArg(s)
+  if arg.valueType == ValueType.float:
+    try:
+      return arg.valueAsString.parseFloat
+    except ValueError:
+      raise ArgumentParseError.newException(fmt"{arg.valueAsString} cannot be parsed to float.")
+  else:
+    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not float.")
+
+
+proc getValueBool*(s: string): bool =
+  let arg = getArg(s)
+  if arg.flag:
+    # if arg.flag == true, arg.valueAsString should be "" or "true".
+    return arg.valueAsString == "true"
+  else:
+    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not bool.")
