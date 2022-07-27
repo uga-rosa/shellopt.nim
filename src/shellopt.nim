@@ -288,11 +288,11 @@ Usage:
   {executableName} [OPTIONS]... ARGS...
 {usage}
 
-Options:"""
+OPTIONS:"""
 
   if requiredDoc != "":
-    doc = doc & "\n[required-params]\n" & requiredDoc
+    doc = doc & "\n[required]\n" & requiredDoc
   if optionalDoc != "":
-    doc = doc & "\n[optional-params]\n" & optionalDoc
+    doc = doc & "\n[optional]\n" & optionalDoc
 
   return doc
