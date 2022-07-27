@@ -8,7 +8,7 @@ type
     string, int, float, bool
   # required condition
   # 1. `long` or `short` must be set.
-  # 2. Don't set `required` and `flag` (same as `valueType: ValueType.bool`) at the same time.
+  # 2. Don't set `required` and `flag` (same as `argType: ArgType.bool`) at the same time.
   # 3. Don't set a string of more than 2 characters for `short`.
   # 4. Don't set a string of single character for `long`.
   # 5. Don't duplicate `long` and `short`.

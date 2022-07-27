@@ -7,31 +7,30 @@ Unlike the Nim default, it is adapted to the standard format of the shell.
 
 ```sh
 # Install this library
-git clone https://github.com/uga-rosa/shellopt.nim
-cd shellopt.nim
-nimble install
+nimble install shellopt
 
 # Example source code
-echo <<EOL > shellopt_test.nim
-import shellopt
+cat <<EOL > shellopt_test.nim
+import shellopt, options
 
 proc main() =
-  setArg(
-    ArgumentOption(
+  let setArgSuccess = setArg(
+    ArgOpt(
       long: "flag",
       short: "f",
       flag: true,
     ),
-    ArgumentOption(
+    ArgOpt(
       long: "value",
       short: "v",
     )
   )
+  doAssert(setArgSuccess, "setArg() failed")
 
-  echo getValueF("flag")
-  echo getValueF("f")
-  echo getValue("value")
-  echo getValue("v")
+  echo getBool("flag").get
+  echo getBool("f").get
+  echo getString("value").get
+  echo getString("v").get
 
 when isMainModule:
   main()
