@@ -1,4 +1,4 @@
-import shellopt, unittest, tables, strutils
+import shellopt, unittest, tables, strutils, options
 
 
 type
@@ -19,53 +19,55 @@ proc build(s: seq[seq[string]]): InputExpects =
 
 
 proc run(ies: InputExpects) =
-  setArg(
-    ArgumentOption(
+  let setSuccess = setArg(
+    ArgOpt(
       long: "string",
-      valueType: ValueType.string,
+      argType: ArgType.string,
       dscr: "string option",
     ),
-    ArgumentOption(
+    ArgOpt(
       long: "int",
       short: "d",
-      valueType: ValueType.int,
+      argType: ArgType.int,
       dscr: "int option",
     ),
-    ArgumentOption(
+    ArgOpt(
       long: "float",
-      valueType: ValueType.float,
+      argType: ArgType.float,
       dscr: "float option",
     ),
-    ArgumentOption(
+    ArgOpt(
       long: "bool",
       flag: true,
       dscr: "flag option",
     )
   )
+  doAssert(setSuccess, "setArg failed")
   for ie in ies:
-    parseArg(ie.input)
+    let parseSuccess = parseArg(ie.input)
+    doAssert(parseSuccess, "parseArg failed")
     for k, v in ie.expect:
       case k
       of "string", "s":
         let
           expectValue = v
-          actualValue = getValueString(k)
-        check expectValue == actualValue
+          actualValue = getString(k)
+        check expectValue == actualValue.get
       of "int", "d":
         let
           expectValue = v.parseInt
-          actualValue = getValueInt(k)
-        check expectValue == actualValue
+          actualValue = getInt(k)
+        check expectValue == actualValue.get
       of "float", "f":
         let
           expectValue = v.parseFloat
-          actualValue = getValueFloat(k)
-        check expectValue == actualValue
+          actualValue = getFloat(k)
+        check expectValue == actualValue.get
       of "bool", "b":
         let
           expectValue = v.parseBool
-          actualValue = getValueBool(k)
-        check expectValue == actualValue
+          actualValue = getBool(k)
+        check expectValue == actualValue.get
       else:
         check false
 
@@ -76,11 +78,11 @@ let inputExpects = build(@[
     "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
   ],
   @[
-    "-s hello -i 3 -f 3.14 -b",
+    "-s hello -d 3 -f 3.14 -b",
     "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
   ],
   @[
-    "-shello -i3 -f3.14 -b",
+    "-shello -d3 -f3.14 -b",
     "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
   ],
 ])

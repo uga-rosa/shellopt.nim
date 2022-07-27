@@ -1,116 +1,70 @@
-import os, sets, strutils, tables, sequtils, strformat
+import os, logging, strutils, tables, sequtils, strformat, options, sugar
 
 
 type
-  Argument = string
-  Arguments = seq[Argument]
-  ValueType* {.pure.} = enum
+  Arg = string
+  Args = seq[Arg]
+  ArgType* {.pure.} = enum
     string, int, float, bool
   # required condition
   # 1. `long` or `short` must be set.
   # 2. Don't set `required` and `flag` (same as `valueType: ValueType.bool`) at the same time.
   # 3. Don't set a string of more than 2 characters for `short`.
   # 4. Don't set a string of single character for `long`.
-  # Violation of these raises an ArgumentInvalidOptionError.
-  ArgumentOption* = ref object
+  # 5. Don't duplicate `long` and `short`.
+  # If these conditions are not met, the ArgOpt is ignored.
+  # log level: lvlError
+  ArgOpt* = ref object
     long*: string
     short*: string
-    valueType*: ValueType
+    argType*: ArgType
     dscr*: string
+    # If `required` is true but don't set at runtime, 
     required*: bool
     valueAsString: string
     flag*: bool # Alias: valueType bool
-  ArgumentOptions* = seq[ArgumentOption]
+  ArgOpts* = seq[ArgOpt]
 
-  # Errors
-  # See above.
-  ArgumentOptionError = object of CatchableError
-  # The option names (`long` or `short`) are duplicated.
-  ArgumentDuplicateError = object of CatchableError
-  # The required options are not specified at runtime.
-  ArgumentRequiredError = object of CatchableError
-  # Unknown option name
-  ArgumentNameError = object of CatchableError
-  # Get a value with invalid type.
-  ArgumentTypeError = object of CatchableError
-  # Parsing failed
-  ArgumentParseError = object of CatchableError
+
+proc name(a: ArgOpt): string =
+  if a.long != "":
+    return a.long
+  else:
+    return a.short
 
 
 var
+  logger = newConsoleLogger(lvlWarn)
   calledSetArg = false
-  calledParseArg = false
-  arguments: Arguments
-  argumentOptions: ArgumentOptions
-  longNames: Table[string, ArgumentOption]
-  shortNames: Table[string, ArgumentOption]
+  arguments: Args
+  argumentOptions: ArgOpts
+  longNames: Table[string, ArgOpt]
+  shortNames: Table[string, ArgOpt]
   usage: string
 
 
-argumentOptions.add(ArgumentOption(
+proc loggerSetup*(lvl: Level) =
+  logger = newConsoleLogger(lvl)
+
+
+proc loggerSetup*(lvl: Level, fmtStr: string) =
+  logger = newConsoleLogger(lvl, fmtStr)
+
+
+proc loggerSetup*(lvl: Level, fmtStr: string, useStderr: bool) =
+  logger = newConsoleLogger(lvl, fmtStr, useStderr)
+
+
+argumentOptions.add(ArgOpt(
   long: "help",
   short: "h",
   dscr: "Print this help message."
 ))
 
 
-proc setArg*(args: ArgumentOptions) =
-  for arg in args:
-    if arg.long == "" and arg.short == "":
-      raise ArgumentOptionError.newException("Neither `long` nor `short` is set\n" & $arg[])
-    if arg.required and arg.flag:
-      raise ArgumentOptionError.newException("`required` and `flag` are set at the same.\n" & $arg[])
-    if arg.short.len > 1:
-      raise ArgumentOptionError.newException("Set strings of more than 2 characters for `short`.\n" & $arg[])
-    if arg.long.len == 10:
-      raise ArgumentOptionError.newException("Set strings of single character for `long`\n" & $arg[])
-
-    if arg.valueType == ValueType.bool:
-      arg.flag = true
-    elif arg.flag == true:
-      arg.valueType = ValueType.bool
-
-    argumentOptions.add(arg)
-
-    # Set short option name automatically.
-    if arg.short == "":
-      let s = $arg.long[0]
-      if not shortNames.hasKey(s):
-        arg.short = s
-
-    longNames[arg.long] = arg
-    shortNames[arg.short] = arg
-
-  if longNames.len != longNames.keys.toSeq.toHashSet.len:
-    raise ArgumentDuplicateError.newException("Duplicate long options")
-
-  if shortNames.len != shortNames.keys.toSeq.toHashSet.len:
-    raise ArgumentDuplicateError.newException("Duplicate short options")
-
-  calledSetArg = true
-  calledParseArg = false
-
-
-proc setArg*(args: varargs[ArgumentOption]) =
-  let argsSeq = args.toSeq
-  setArg(argsSeq)
-
-
-proc name(arg: ArgumentOption): string =
-  if arg.long != "":
-    return arg.long
-  else:
-    return arg.short
-
-
-proc parseArg*(cmdargs = os.commandLineParams()) =
-  if not calledSetArg:
-    raiseAssert("Please call `setArg()` first.")
-
-  if calledParseArg:
-    return
-  calledParseArg = true
-
+# If all parsing success, return true.
+proc parseArg*(cmdargs = os.commandLineParams()): bool =
+  result = true
   var i = 0
   while i <= cmdargs.high:
     let cmdarg = cmdargs[i]
@@ -124,7 +78,8 @@ proc parseArg*(cmdargs = os.commandLineParams()) =
           i.inc
           arg.valueAsString = cmdargs[i]
       else:
-        raise ArgumentNameError.newException("Unknown option: " & $long)
+        logger.log(lvlError, "Unknown option: " & $long)
+        result = false
     elif cmdarg.startsWith("-"):
       let shorts = cmdarg[1..^1]
       for j in 0..shorts.high:
@@ -141,25 +96,88 @@ proc parseArg*(cmdargs = os.commandLineParams()) =
               arg.valueAsString = shorts[j+1..^1]
             break
         else:
-          raise ArgumentNameError.newException("Unknown option: " & $short)
+          logger.log(lvlError, "Unknown option: " & $short)
+          result = false
     else:
       arguments.add(cmdarg)
     i.inc
 
-  let requiredErrors = argumentOptions
+  let requiredNotSet = argumentOptions
     .filterIt(it.required and it.valueAsString == "")
     .mapIt(it.name)
-  if requiredErrors.len > 0:
-    raise ArgumentRequiredError.newException(fmt"Required options: {requiredErrors} are not set.")
+  if requiredNotSet.len > 0:
+    logger.log(lvlError, fmt"Required options: {requiredNotSet} are not set.")
+    result = false
+
+
+# If all set and parsing success, return true
+proc setArg*(args: ArgOpts): bool =
+  calledSetArg = true
+  result = true
+  for arg in args:
+    var ignore = false
+
+    if arg.long == "" and arg.short == "":
+      logger.log(lvlError, "Neither `long` nor `short` is set", $arg[])
+      ignore = true
+
+    if arg.required and arg.flag:
+      logger.log(lvlError, "`required` and `flag` are set at the same.", $arg[])
+      ignore = true
+
+    if arg.short.len > 1:
+      logger.log(lvlError, "Set strings of more than 2 characters for `short`.", $arg[])
+      ignore = true
+
+    if arg.long.len == 10:
+      logger.log(lvlError, "Set strings of single character for `long`", $arg[])
+      ignore = true
+
+    if arg.long != "":
+      if longNames.hasKey(arg.long):
+        logger.log(lvlError, "Duplicate long options: " & arg.long)
+        ignore = true
+      else:
+        longNames[arg.long] = arg
+
+    if arg.short != "":
+      if shortNames.hasKey(arg.short):
+        logger.log(lvlError, "Duplicate short options: " & arg.short)
+        ignore = true
+      else:
+        shortNames[arg.short] = arg
+    else:
+      # Set short option name automatically.
+      if arg.long != "":
+        let s = $arg.long[0]
+        if not shortNames.hasKey(s):
+          arg.short = s
+          shortNames[arg.short] = arg
+
+    if ignore:
+      result = false
+    else:
+      if arg.argType == ArgType.bool:
+        arg.flag = true
+      elif arg.flag == true:
+        arg.argType = ArgType.bool
+
+      argumentOptions.add(arg)
+
+  return parseArg() and result
+
+
+proc setArg*(args: varargs[ArgOpt]): bool =
+  let argsSeq = args.toSeq
+  setArg(argsSeq)
 
 
 # 1-index
-proc getValue*(i: int): string =
+proc getArg*(i: int): Option[string] =
   let id = i-1
-  parseArg()
 
   if id <= arguments.high:
-    return arguments[id]
+    return arguments[id].some
   else:
     let num =
       case i
@@ -167,69 +185,55 @@ proc getValue*(i: int): string =
       of 2: "2nd"
       of 3: "3rd"
       else: $i & "th"
-    raise ArgumentNameError.newException(fmt"The {num} argument is called, but there are only {arguments.len} arguments.")
+    logger.log(lvlError, fmt"The {num} argument is called, but there are only {arguments.len} arguments.")
 
 
-proc getArg(s: string): ArgumentOption =
-  parseArg()
+proc getArgOpt(s: string): Option[ArgOpt] =
+  if not calledSetArg:
+    logger.log(lvlFatal, "`setArg()` has not been called!")
+    return
+
   if longNames.hasKey(s):
-    return longNames[s]
+    return longNames[s].some
   elif shortNames.hasKey(s):
-    return shortNames[s]
+    return shortNames[s].some
   else:
-    raise ArgumentNameError.newException("Unknown option: " & s)
+    logger.log(lvlError, "Unknown option: " & s)
 
 
-# getValue`Type`() raises ArgumentTypeError if the type is not appropriate.
-# The only exception is this function, which is allowed to be retrieved as a string even if it is set to another type.
-proc getValueString*(s: string): string =
-  let arg = getArg(s)
-  # Omitted type check
-  return arg.valueAsString
+proc getString*(s: string): Option[string] =
+  let arg = getArgOpt(s)
+  if arg.filter(it => it.argType == ArgType.string).isNone:
+    logger.log(lvlInfo, "argType of {arg.get.name} is {arg.get.argType}, not string.")
+  arg.map(it => it.valueAsString)
 
 
-proc getValueInt*(s: string): int =
-  let arg = getArg(s)
-  if arg.valueType == ValueType.int:
-    try:
-      return arg.valueAsString.parseInt
-    except ValueError:
-      raise ArgumentParseError.newException(fmt"{arg.valueAsString} cannot be parsed to int.")
-  else:
-    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not int.")
+proc getInt*(s: string): Option[int] =
+  let arg = getArgOpt(s)
+  arg.filter(it => it.argType == ArgType.int).map(it => it.valueAsString.parseInt)
 
 
-proc getValueFloat*(s: string): float =
-  let arg = getArg(s)
-  if arg.valueType == ValueType.float:
-    try:
-      return arg.valueAsString.parseFloat
-    except ValueError:
-      raise ArgumentParseError.newException(fmt"{arg.valueAsString} cannot be parsed to float.")
-  else:
-    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not float.")
+proc getFloat*(s: string): Option[float] =
+  let arg = getArgOpt(s)
+  arg.filter(it => it.argType == ArgType.float).map(it => it.valueAsString.parseFloat)
 
 
-proc getValueBool*(s: string): bool =
-  let arg = getArg(s)
-  if arg.flag:
-    # if arg.flag == true, arg.valueAsString should be "" or "true".
-    return arg.valueAsString == "true"
-  else:
-    raise ArgumentTypeError.newException(fmt"Option `{arg.name}`'s type is {arg.valueType}, not bool.")
+proc getBool*(s: string): Option[bool] =
+  let arg = getArgOpt(s)
+  arg.filter(it => it.argType == ArgType.bool).map(it => it.valueAsString == "true")
 
 
 proc setUsage*(s: string) =
   usage = s
 
 
-proc getStrings(arg: ArgumentOption): (string, string, string) =
+proc getStrings(arg: ArgOpt): (string, string, string) =
   var keys: seq[string]
   if arg.short != "":
     keys.add("-" & arg.short)
   if arg.long != "":
     keys.add("--" & arg.long)
-  (keys.join(", "), $arg.valueType, arg.dscr)
+  (keys.join(", "), $arg.argType, arg.dscr)
 
 
 proc getHelpDocument*(): string =
@@ -270,4 +274,4 @@ Options:"""
       .mapIt("  " & it[0].alignLeft(cols[0]) & ": " & it[1].alignLeft(cols[1]) & it[2])
       .join("\n")
 
-  return fmt"{doc}\n{requiredDoc}\n{optionalDoc}"
+  return @[doc, requiredDoc, optionalDoc].join("\n")
