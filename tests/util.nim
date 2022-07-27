@@ -1,4 +1,4 @@
-import shellopt, unittest, tables, strutils, options
+import shellopt, unittest, tables, strutils, options, os
 
 
 type
@@ -8,9 +8,9 @@ type
   InputExpects = seq[InputExpect]
 
 
-proc build(s: seq[seq[string]]): InputExpects =
+proc build*(s: seq[seq[string]]): InputExpects =
   for ie in s:
-    let input = ie[0].splitWhitespace
+    let input = ie[0].parseCmdLine
     var expect: Table[string, string]
     for e in ie[1].splitWhitespace:
       let kv = e.split("=")
@@ -18,12 +18,13 @@ proc build(s: seq[seq[string]]): InputExpects =
     result.add(InputExpect(input: input, expect: expect))
 
 
-proc run(ies: InputExpects) =
-  let setSuccess = setArg(
+proc run*(ies: InputExpects) =
+  let setSuccess = setArg(@[
     ArgOpt(
       long: "string",
       argType: ArgType.string,
       dscr: "string option",
+      required : true,
     ),
     ArgOpt(
       long: "int",
@@ -41,7 +42,7 @@ proc run(ies: InputExpects) =
       flag: true,
       dscr: "flag option",
     )
-  )
+  ], false)
   doAssert(setSuccess, "setArg failed")
   for ie in ies:
     let parseSuccess = parseArg(ie.input)
@@ -52,41 +53,25 @@ proc run(ies: InputExpects) =
         let
           expectValue = v
           actualValue = getString(k)
+        check actualValue.isSome
         check expectValue == actualValue.get
       of "int", "d":
         let
           expectValue = v.parseInt
           actualValue = getInt(k)
+        check actualValue.isSome
         check expectValue == actualValue.get
       of "float", "f":
         let
           expectValue = v.parseFloat
           actualValue = getFloat(k)
+        check actualValue.isSome
         check expectValue == actualValue.get
       of "bool", "b":
         let
           expectValue = v.parseBool
           actualValue = getBool(k)
+        check actualValue.isSome
         check expectValue == actualValue.get
       else:
         check false
-
-
-let inputExpects = build(@[
-  @[
-    "--string hello --int 3 --float 3.14 --bool",
-    "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
-  ],
-  @[
-    "-s hello -d 3 -f 3.14 -b",
-    "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
-  ],
-  @[
-    "-shello -d3 -f3.14 -b",
-    "string=hello s=hello int=3 d=3 float=3.14 f=3.14 bool=true b=true",
-  ],
-])
-
-
-when isMainModule:
-  run(inputExpects)

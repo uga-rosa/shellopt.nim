@@ -55,13 +55,6 @@ proc loggerSetup*(lvl: Level, fmtStr: string, useStderr: bool) =
   logger = newConsoleLogger(lvl, fmtStr, useStderr)
 
 
-argumentOptions.add(ArgOpt(
-  long: "help",
-  short: "h",
-  dscr: "Print this help message."
-))
-
-
 # If all parsing success, return true.
 proc parseArg*(cmdargs = os.commandLineParams()): bool =
   result = true
@@ -110,10 +103,29 @@ proc parseArg*(cmdargs = os.commandLineParams()): bool =
     result = false
 
 
+proc init() =
+  argumentOptions = @[]
+  longNames = initTable[string, ArgOpt]()
+  shortNames = initTable[string, ArgOpt]()
+
+  argumentOptions.add(ArgOpt(
+    long: "help",
+    short: "h",
+    flag: true,
+    dscr: "Print this help message."
+  ))
+  longNames["help"] = argumentOptions[0]
+  shortNames["h"] = argumentOptions[0]
+
+
 # If all set and parsing success, return true
-proc setArg*(args: ArgOpts): bool =
+proc setArg*(args: ArgOpts, doParse = true): bool =
   calledSetArg = true
   result = true
+
+  # initialize
+  init()
+
   for arg in args:
     var ignore = false
 
@@ -164,7 +176,10 @@ proc setArg*(args: ArgOpts): bool =
 
       argumentOptions.add(arg)
 
-  return parseArg() and result
+  if doParse:
+    return parseArg() and result
+  else:
+    return result
 
 
 proc setArg*(args: varargs[ArgOpt]): bool =
@@ -237,14 +252,8 @@ proc getStrings(arg: ArgOpt): (string, string, string) =
 
 
 proc getHelpDocument*(): string =
-  let executableName = getAppFilename()
-  var doc = fmt"""Usage:
-  {executableName} [optional-params] [required-params]
-{usage}
-
-Options:"""
-
   let
+    executableName = getAppFilename().splitPath.tail
     required = argumentOptions
       .filterIt(it.required)
       .map(getStrings)
@@ -266,7 +275,7 @@ Options:"""
   cols[0].inc(2)
   cols[1].inc(4)
 
-  let
+  var
     requiredDoc = required
       .mapIt("  " & it[0].alignLeft(cols[0]) & ": " & it[1].alignLeft(cols[1]) & it[2])
       .join("\n")
@@ -274,4 +283,16 @@ Options:"""
       .mapIt("  " & it[0].alignLeft(cols[0]) & ": " & it[1].alignLeft(cols[1]) & it[2])
       .join("\n")
 
-  return @[doc, requiredDoc, optionalDoc].join("\n")
+  var doc = fmt"""
+Usage:
+  {executableName} [OPTIONS]... ARGS...
+{usage}
+
+Options:"""
+
+  if requiredDoc != "":
+    doc = doc & "\n[required-params]\n" & requiredDoc
+  if optionalDoc != "":
+    doc = doc & "\n[optional-params]\n" & optionalDoc
+
+  return doc
